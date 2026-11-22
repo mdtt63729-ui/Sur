@@ -324,6 +324,10 @@ private const val LAST_WORD_FALLBACK_MS = 600L
 // How the sweep's own clock tracks the reported position: the time it takes to close most of a
 // gap, the largest gap it closes gradually rather than jumping, and how far past the last report
 // it will run on its own.
-private const val SWEEP_CATCH_UP_MS = 150.0
+// How quickly the light closes the gap to where the singing actually is. 150 was loose enough
+// that the sweep trailed the voice by a visible fraction of a syllable and then hurried to catch
+// up, which reads as a stutter on fast lines. 90 keeps it on the singer without ever running
+// ahead, because the position still advances at most one frame at a time.
+private const val SWEEP_CATCH_UP_MS = 90.0
 private const val SWEEP_SNAP_MS = 500.0
 private const val SWEEP_MAX_EXTRAPOLATION_MS = 250.0

@@ -234,7 +234,17 @@ fun Modifier.appleMusicLyricFocus(
     val animatedBlur by animateDpAsState(targetValue = targetBlur, animationSpec = tween(220), label = "appleMusicLyricBlur")
     val blurRadius =
         if (blurEnabled && distanceFromCurrent in -1..1) animatedBlur else targetBlur
-    val lineAlpha = targetAlpha
+    // The two lines either side of the sung one glide to their new brightness instead of snapping
+    // to it. Alpha used to be applied outright on every line, which is why the focus jumped rather
+    // than travelled when the song moved on - the blur moved, the brightness did not. Only the
+    // neighbours animate, the same two lines the blur already animates, so this costs nothing on
+    // the lines nobody is looking at.
+    val animatedAlpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(220),
+        label = "appleMusicLyricAlpha",
+    )
+    val lineAlpha = if (distanceFromCurrent in -1..1) animatedAlpha else targetAlpha
 
     // Metrolist's line motion, ported: the line being sung grows into place from its leading edge
     // and settles; it leaves the same way. Their timings - in over 400ms decelerating, out over
