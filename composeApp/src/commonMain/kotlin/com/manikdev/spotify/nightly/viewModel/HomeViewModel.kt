@@ -1,0 +1,546 @@
+package com.manikdev.spotify.nightly.viewModel
+
+import androidx.lifecycle.viewModelScope
+import com.manikdev.common.SELECTED_LANGUAGE
+import com.manikdev.common.SUPPORTED_LANGUAGE
+import com.manikdev.domain.data.entities.SongEntity
+import com.manikdev.domain.data.model.home.HomeDataCombine
+import com.manikdev.domain.data.model.home.HomeItem
+import com.manikdev.domain.data.model.home.chart.Chart
+import com.manikdev.domain.data.model.mood.Mood
+import com.manikdev.domain.manager.DataStoreManager
+import com.manikdev.domain.manager.DataStoreManager.Values.TRUE
+import com.manikdev.domain.repository.HomeRepository
+import com.manikdev.domain.repository.SongRepository
+import com.manikdev.domain.utils.Resource
+import com.maxrave.logger.Logger
+import com.manikdev.kotlinytmusicscraper.YouTube
+import com.manikdev.kotlinytmusicscraper.models.PlaylistItem
+import com.manikdev.spotify.nightly.ui.component.PlaylistShelf
+import com.manikdev.kotlinytmusicscraper.models.Album
+import com.manikdev.kotlinytmusicscraper.models.Artist
+import com.manikdev.kotlinytmusicscraper.models.SongItem
+import com.manikdev.spotify.nightly.recommendation.EchoRecommendationEngine
+import com.manikdev.spotify.nightly.viewModel.base.BaseViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import spotify.composeapp.generated.resources.Res
+import spotify.composeapp.generated.resources.music_video
+import spotify.composeapp.generated.resources.new_release
+import spotify.composeapp.generated.resources.song
+import spotify.composeapp.generated.resources.view_count
+
+class HomeViewModel(
+    private val dataStoreManager: DataStoreManager,
+    private val youTube: YouTube,
+    private val songRepository: SongRepository,
+    private val homeRepository: HomeRepository,
+) : BaseViewModel() {
+    private val _homeItemList: MutableStateFlow<List<HomeItem>> =
+        MutableStateFlow(arrayListOf())
+    val homeItemList: StateFlow<List<HomeItem>> = _homeItemList
+
+    private var _homeListState = MutableStateFlow<ListState>(ListState.IDLE)
+    val homeListState: StateFlow<ListState> = _homeListState
+
+    private var _continuation = MutableStateFlow<String?>(null)
+    val continuation: StateFlow<String?> = _continuation
+
+    private val _exploreMoodItem: MutableStateFlow<Mood?> = MutableStateFlow(null)
+    val exploreMoodItem: StateFlow<Mood?> = _exploreMoodItem
+    private val _accountInfo: MutableStateFlow<Pair<String?, String?>?> = MutableStateFlow(null)
+    val accountInfo: StateFlow<Pair<String?, String?>?> = _accountInfo
+
+    private var homeJob: Job? = null
+
+    val showSnackBarErrorState = MutableSharedFlow<String>()
+
+    private val _chart: MutableStateFlow<Chart?> = MutableStateFlow(null)
+    val chart: StateFlow<Chart?> = _chart
+    private val _newRelease: MutableStateFlow<List<HomeItem>> = MutableStateFlow(arrayListOf())
+    val newRelease: StateFlow<List<HomeItem>> = _newRelease
+
+    // Cold-start "Made for you" carousel. Empty until the Echo engine has its first tier.
+    // Playlist rows for Home: five titled shelves fetched from InnerTube playlist search.
+    private val _echoPlaylists: MutableStateFlow<List<PlaylistShelf>> = MutableStateFlow(emptyList())
+    val echoPlaylists: StateFlow<List<PlaylistShelf>> = _echoPlaylists
+    private var echoPlaylistJob: Job? = null
+
+    private val _echoCards: MutableStateFlow<List<SongItem>> = MutableStateFlow(emptyList())
+    val echoCards: StateFlow<List<SongItem>> = _echoCards
+    private var echoJob: Job? = null
+    var regionCodeChart: MutableStateFlow<String?> = MutableStateFlow(null)
+
+    val loading = MutableStateFlow<Boolean>(true)
+    val loadingChart = MutableStateFlow<Boolean>(true)
+    private var regionCode: String = ""
+    private var language: String = ""
+
+    private val _songEntity: MutableStateFlow<SongEntity?> = MutableStateFlow(null)
+    val songEntity: StateFlow<SongEntity?> = _songEntity
+
+    private var _params: MutableStateFlow<String?> = MutableStateFlow(null)
+    val params: StateFlow<String?> = _params
+
+    // For showing alert that should log in to YouTube
+    private val _showLogInAlert: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    val showLogInAlert: StateFlow<Boolean> = _showLogInAlert
+
+    val dataSyncId =
+        dataStoreManager
+            .dataSyncId
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    private val _mainHomeThumbnail: MutableStateFlow<String?> = MutableStateFlow(null)
+    val mainHomeThumbnail: StateFlow<String?> = _mainHomeThumbnail
+
+    // The page background image YouTube sends with Home, null when it sends none.
+    private val _homeBackground: MutableStateFlow<String?> = MutableStateFlow(null)
+    val homeBackground: StateFlow<String?> = _homeBackground
+
+    init {
+        if (runBlocking { dataStoreManager.cookie.first() }.isEmpty() &&
+            runBlocking {
+                dataStoreManager.shouldShowLogInRequiredAlert.first() == TRUE
+            }
+        ) {
+            _showLogInAlert.update { true }
+        }
+        homeJob = Job()
+        viewModelScope.launch {
+            regionCodeChart.value = dataStoreManager.chartKey.first()
+            exploreChart(regionCodeChart.value ?: "ZZ")
+            language = dataStoreManager.getString(SELECTED_LANGUAGE).first()
+                ?: SUPPORTED_LANGUAGE.codes.first()
+            //  refresh when region change
+            val job1 =
+                launch {
+                    dataStoreManager.location.distinctUntilChanged().collect {
+                        regionCode = it
+                        getHomeItemList(params.value)
+                    }
+                }
+            //  refresh when language change
+            val job2 =
+                launch {
+                    dataStoreManager.language.distinctUntilChanged().collect {
+                        language = it
+                        getHomeItemList(params.value)
+                    }
+                }
+            val job3 =
+                launch {
+                    dataStoreManager.cookie.distinctUntilChanged().collect {
+                        getHomeItemList(params.value)
+                        _accountInfo.emit(
+                            Pair(
+                                dataStoreManager.getString("AccountName").first(),
+                                dataStoreManager.getString("AccountThumbUrl").first(),
+                            ),
+                        )
+                    }
+                }
+            val job4 =
+                launch {
+                    params.collectLatest {
+                        getHomeItemList(it)
+                    }
+                }
+            val job5 =
+                launch {
+                    dataStoreManager
+                        .cookie
+                        .distinctUntilChanged()
+                        .collectLatest {
+                            if (it.isNotEmpty()) {
+                                Logger.w(tag, "Cookie changed, refreshing home")
+                                loading.value = true
+                                delay(1000) // To wait for the cookie to be saved properly
+                                getHomeItemList(params.value)
+                            }
+                        }
+                }
+            val job6 =
+                launch {
+                    homeItemList.collectLatest { list ->
+                        _mainHomeThumbnail.value =
+                            list
+                                .firstOrNull()
+                                ?.contents
+                                ?.firstOrNull()
+                                ?.thumbnails
+                                ?.lastOrNull()
+                                ?.url
+                    }
+                }
+            job1.join()
+            job2.join()
+            job3.join()
+            job4.join()
+            job5.join()
+            job6.join()
+        }
+    }
+
+    fun doneShowLogInAlert(neverShowAgain: Boolean = false) {
+        viewModelScope.launch {
+            _showLogInAlert.update { false }
+            if (neverShowAgain) {
+                dataStoreManager.setShouldShowLogInRequiredAlert(false)
+            }
+        }
+    }
+
+    /**
+     * Fills the first screen for a user with no history yet.
+     *
+     * Runs the Echo engine's tiers and publishes each partial result, so the carousel appears
+     * with the new-release pool and keeps growing as the radio lookups land. Safe to call
+     * repeatedly: it no-ops once the carousel has content.
+     */
+    fun loadEchoRecommendations() {
+        if (_echoCards.value.isNotEmpty()) return
+        echoJob?.cancel()
+        echoJob =
+            viewModelScope.launch {
+                runCatching {
+                    EchoRecommendationEngine(
+                        youTube = youTube,
+                        library = librarySongs(),
+                        recentlyPlayed = historySongs(),
+                    ).build { cards ->
+                        if (cards.size >= EchoRecommendationEngine.MIN_CARDS) {
+                            _echoCards.value = cards
+                        }
+                    }
+                }.onFailure { Logger.w("EchoEngine", "cold start failed: ${it.message}") }
+            }
+    }
+
+    fun getHomeItemList(params: String? = null) {
+        // These two fire five InnerTube playlist searches plus the recommendation engine. Starting
+        // them at the same instant as the first frame is why Home opened slowly and the update
+        // sheet's animation stuttered on launch: the network and the CPU were already saturated
+        // before anything had been drawn. Deferring them lets the feed and the first frame land
+        // first, and the rows fill in a moment later.
+        viewModelScope.launch {
+            delay(700)
+            loadEchoRecommendations()
+            loadEchoPlaylists()
+        }
+        loading.value = true
+        _homeListState.value = ListState.LOADING
+        homeJob?.cancel()
+        homeJob =
+            viewModelScope.launch {
+                // Read the settings INSIDE the coroutine. These were runBlocking on the main
+                // thread, waiting on DataStore before the feed request could even start - which is
+                // exactly the 200-400ms single-frame stall the frame overlay caught on every page.
+                language =
+                    dataStoreManager.getString(SELECTED_LANGUAGE).first()
+                        ?: SUPPORTED_LANGUAGE.codes.first()
+                regionCode = dataStoreManager.location.first()
+                combine(
+                    homeRepository.getHomeData(
+                        params,
+                        getString(Res.string.view_count),
+                        getString(Res.string.song),
+                    ),
+                    homeRepository.getMoodAndMomentsData(),
+                    homeRepository.getChartData(dataStoreManager.chartKey.first()),
+                    homeRepository.getNewRelease(
+                        getString(Res.string.new_release),
+                        getString(Res.string.music_video),
+                    ),
+                ) { home, exploreMood, exploreChart, newRelease ->
+                    HomeDataCombine(home, exploreMood, exploreChart, newRelease)
+                }.collect { result ->
+                    val home = result.home
+                    Logger.d("home size", "${home.data?.second?.size}")
+                    val exploreMoodItem = result.mood
+                    val chart = result.chart
+                    val newRelease = result.newRelease
+                    when (home) {
+                        is Resource.Success -> {
+                            _continuation.value = home.data?.first
+                            _homeItemList.value = home.data?.second ?: listOf()
+                            _homeBackground.value = home.data?.third
+                        }
+
+                        else -> {
+                            _continuation.value = null
+                            _homeItemList.value = listOf()
+                        }
+                    }
+                    if (continuation.value.isNullOrEmpty()) {
+                        _homeListState.value = ListState.PAGINATION_EXHAUST
+                    } else {
+                        _homeListState.value = ListState.IDLE
+                    }
+                    when (chart) {
+                        is Resource.Success -> {
+                            _chart.value = chart.data
+                        }
+
+                        else -> {
+                            _chart.value = null
+                        }
+                    }
+                    when (newRelease) {
+                        is Resource.Success -> {
+                            _newRelease.value = newRelease.data ?: arrayListOf()
+                        }
+
+                        else -> {
+                            _newRelease.value = arrayListOf()
+                        }
+                    }
+                    when (exploreMoodItem) {
+                        is Resource.Success -> {
+                            _exploreMoodItem.value = exploreMoodItem.data
+                        }
+
+                        else -> {
+                            _exploreMoodItem.value = null
+                        }
+                    }
+                    regionCodeChart.value = dataStoreManager.chartKey.first()
+                    Logger.d("HomeViewModel", "getHomeItemList: $result")
+                    dataStoreManager.cookie.first().let {
+                        if (it != "") {
+                            _accountInfo.emit(
+                                Pair(
+                                    dataStoreManager.getString("AccountName").first(),
+                                    dataStoreManager.getString("AccountThumbUrl").first(),
+                                ),
+                            )
+                        }
+                    }
+                    when {
+                        home is Resource.Error -> home.message
+                        exploreMoodItem is Resource.Error -> exploreMoodItem.message
+                        chart is Resource.Error -> chart.message
+                        else -> null
+                    }?.let {
+                        showSnackBarErrorState.emit(it)
+                        Logger.w("Error", "getHomeItemList: ${home.message}")
+                        Logger.w("Error", "getHomeItemList: ${exploreMoodItem.message}")
+                        Logger.w("Error", "getHomeItemList: ${chart.message}")
+                    }
+                    loading.value = false
+                }
+            }
+    }
+
+    /** A shelf's "Play all": YouTube's own finite queue of that shelf's songs. */
+    fun playAll(item: HomeItem) {
+        item.playAllEndpoint?.let { playFromEndpoint(it, item.title) }
+    }
+
+    fun getContinueHomeItem(continuation: String?) {
+        viewModelScope.launch {
+            if (continuation.isNullOrEmpty()) {
+                _homeListState.value = ListState.PAGINATION_EXHAUST
+                return@launch
+            } else {
+                log("Get more home item with continuation: $continuation")
+                _homeListState.value = ListState.PAGINATING
+                homeRepository
+                    .getHomeDataContinue(
+                        continuation,
+                        getString(Res.string.view_count),
+                        getString(Res.string.song),
+                    ).collect { home ->
+                        when (home) {
+                            is Resource.Success -> {
+                                _continuation.value = home.data?.first
+                                val newItems = home.data?.second ?: listOf()
+                                _homeItemList.update { it + newItems }
+                                if (home.data?.first.isNullOrEmpty()) {
+                                    _homeListState.value = ListState.PAGINATION_EXHAUST
+                                } else {
+                                    _homeListState.value = ListState.IDLE
+                                }
+                            }
+
+                            is Resource.Error -> {
+                                _continuation.value = null
+                                Logger.w(tag, "getContinueHomeItem: ${home.message}")
+                                showSnackBarErrorState.emit(home.message ?: "Unknown error")
+                                _homeListState.value = ListState.PAGINATION_EXHAUST
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    fun exploreChart(region: String) {
+        viewModelScope.launch {
+            loadingChart.value = true
+            homeRepository
+                .getChartData(
+                    region,
+                ).collect { values ->
+                    regionCodeChart.value = region
+                    dataStoreManager.setChartKey(region)
+                    when (values) {
+                        is Resource.Success -> {
+                            _chart.value = values.data
+                        }
+
+                        else -> {
+                            _chart.value = null
+                        }
+                    }
+                    loadingChart.value = false
+                }
+        }
+    }
+
+    fun setParams(params: String?) {
+        _params.value = params
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        homeJob?.cancel()
+    }
+
+    companion object {
+        /**
+         * The playlist rows Home shows, in order. Each entry is one InnerTube playlist search;
+         * five rows, which is the range asked for.
+         */
+        private val PLAYLIST_SHELVES: List<Pair<String, String>> =
+            listOf(
+                // Every row is an India-targeted query: the browse call already runs with the IN
+                // region, and the words here keep the results Indian even when a query is broad.
+                "Made for you" to "hindi top hits playlist india",
+                "Bollywood essentials" to "bollywood best songs playlist",
+                "Punjabi hits" to "punjabi top songs playlist",
+                "South Indian hits" to "tamil telugu hit songs playlist",
+                "Chill & lo-fi" to "hindi lofi chill playlist",
+                "Romantic hours" to "hindi romantic songs playlist india",
+            )
+
+        // Home params
+        const val HOME_PARAMS_RELAX = "ggM8SgQIBxADSgQIBRABSgQICRABSgQIChABSgQIDRABSgQICBABSgQIBBABSgQIDhABSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_SLEEP = "ggM8SgQIBxABSgQIBRADSgQICRABSgQIChABSgQIDRABSgQICBABSgQIBBABSgQIDhABSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_ENERGIZE = "ggM8SgQIBxABSgQIBRABSgQICRADSgQIChABSgQIDRABSgQICBABSgQIBBABSgQIDhABSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_SAD = "ggM8SgQIBxABSgQIBRABSgQICRABSgQIChADSgQIDRABSgQICBABSgQIBBABSgQIDhABSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_ROMANCE = "ggM8SgQIBxABSgQIBRABSgQICRABSgQIChABSgQIDRADSgQICBABSgQIBBABSgQIDhABSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_FEEL_GOOD = "ggM8SgQIBxABSgQIBRABSgQICRABSgQIChABSgQIDRABSgQICBADSgQIBBABSgQIDhABSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_WORKOUT = "ggM8SgQIBxABSgQIBRABSgQICRABSgQIChABSgQIDRABSgQICBABSgQIBBADSgQIDhABSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_PARTY = "ggM8SgQIBxABSgQIBRABSgQICRABSgQIChABSgQIDRABSgQICBABSgQIBBABSgQIDhADSgQIAxABSgQIBhAB"
+        const val HOME_PARAMS_COMMUTE = "ggM8SgQIBxABSgQIBRABSgQICRABSgQIChABSgQIDRABSgQICBABSgQIBBABSgQIDhABSgQIAxADSgQIBhAB"
+        const val HOME_PARAMS_FOCUS = "ggM8SgQIBxABSgQIBRABSgQICRABSgQIChABSgQIDRABSgQICBABSgQIBBABSgQIDhABSgQIAxABSgQIBhAD"
+    }
+
+    /**
+     * The user's own songs, mapped to the scraper's SongItem so the carousel selector can put
+     * them in its middle priority band. This is what makes the shelves personal rather than a
+     * slice of the public pool: the selector interleaves these with the recommendations, so a
+     * library of 500 songs cannot fill the whole row.
+     */
+    private suspend fun librarySongs(): List<SongItem> =
+        runCatching {
+            songRepository
+                .getLikedSongs()
+                .first()
+                .map { song ->
+                    SongItem(
+                        id = song.videoId,
+                        title = song.title,
+                        artists = song.artistName.orEmpty().mapIndexed { index, name ->
+                            Artist(name = name, id = song.artistId?.getOrNull(index).orEmpty())
+                        },
+                        album = song.albumName?.let { Album(name = it, id = song.albumId.orEmpty()) },
+                        duration = song.durationSeconds,
+                        thumbnail = song.thumbnails.orEmpty(),
+                        explicit = song.isExplicit,
+                        musicVideoType = song.videoType,
+                    )
+                }
+        }.getOrDefault(emptyList())
+
+    /**
+     * The songs this user actually plays, most-played first.
+     *
+     * No new table is needed for this: the app already stores `totalPlayTime` on every song, so
+     * ranking by it is the same signal Echo derives from its play-event table — just already
+     * accumulated. This is the selector's top priority band, which is what makes "Keep listening"
+     * and the carousel reflect listening rather than a slice of the public pool.
+     */
+    private suspend fun historySongs(): List<SongItem> =
+        runCatching {
+            songRepository
+                .getAllSongs(300)
+                .first()
+                .filter { it.totalPlayTime > 0 }
+                .sortedByDescending { it.totalPlayTime }
+                .take(50)
+                .map { song ->
+                    SongItem(
+                        id = song.videoId,
+                        title = song.title,
+                        artists = song.artistName.orEmpty().mapIndexed { index, name ->
+                            Artist(name = name, id = song.artistId?.getOrNull(index).orEmpty())
+                        },
+                        album = song.albumName?.let { Album(name = it, id = song.albumId.orEmpty()) },
+                        duration = song.durationSeconds,
+                        thumbnail = song.thumbnails.orEmpty(),
+                        explicit = song.isExplicit,
+                        musicVideoType = song.videoType,
+                    )
+                }
+        }.getOrDefault(emptyList())
+
+    /**
+     * Fills Home with playlists rather than single tracks.
+     *
+     * Five independent InnerTube playlist searches, run in parallel and each contained, so one
+     * slow or failing query cannot empty the screen. Tapping a playlist opens it, and its songs
+     * play from there - which is why this needs no queue or entity conversion.
+     */
+    fun loadEchoPlaylists() {
+        // No early return: a refresh has to actually refetch, otherwise the rows never change.
+        echoPlaylistJob?.cancel()
+        echoPlaylistJob =
+            viewModelScope.launch {
+                val shelves =
+                    PLAYLIST_SHELVES
+                        .map { (title, query) ->
+                            async {
+                                runCatching {
+                                    youTube
+                                        .search(query, YouTube.SearchFilter.FILTER_FEATURED_PLAYLIST)
+                                        .getOrNull()
+                                        ?.items
+                                        ?.filterIsInstance<PlaylistItem>()
+                                        ?.take(10)
+                                        .orEmpty()
+                                }.getOrDefault(emptyList())
+                                    .let { PlaylistShelf(title = title, items = it) }
+                            }
+                        }.awaitAll()
+                        .filter { it.items.isNotEmpty() }
+                if (shelves.isNotEmpty()) _echoPlaylists.value = shelves
+            }
+    }
+}
