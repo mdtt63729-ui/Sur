@@ -112,8 +112,43 @@ jobs:
             echo "First nightly build of $NIGHTLY_VERSION" > notes.md
           fi
           echo "" >> notes.md
-          # "- " bullets, which the in-app sheet turns into its own bullet lines.
-          git log "$RANGE" --no-merges --pretty=format:"- %s" >> notes.md
+          # Grouped by the part of the app that changed, so the notes read as "Home screen:
+          # these things" rather than one flat list. The group is read off the commit subject -
+          # the first word or two that names a screen or a feature - and anything unrecognised
+          # falls under Other, so nothing is ever dropped.
+          git log "$RANGE" --no-merges --pretty=format:"%s" > commits.txt
+          python3 - <<'PYEOF' >> notes.md
+          groups = [
+              ("Home screen", ("home", "shelf", "chip", "feed")),
+              ("Player", ("player", "mini", "sheet", "artwork", "cover")),
+              ("Lyrics", ("lyrics", "lyric", "metrolist", "enhanced", "classic")),
+              ("Navigation bar", ("nav", "bar", "tab", "fold", "glass")),
+              ("Updates", ("update", "apk", "release", "changelog", "download")),
+              ("Performance", ("perf", "lag", "stutter", "frame", "smooth", "scroll")),
+          ]
+          buckets = {name: [] for name, _ in groups}
+          buckets["Other"] = []
+          for line in open("commits.txt", encoding="utf-8"):
+              subject = line.strip()
+              if not subject:
+                  continue
+              low = subject.lower()
+              for name, keys in groups:
+                  if any(k in low for k in keys):
+                      buckets[name].append(subject)
+                      break
+              else:
+                  buckets["Other"].append(subject)
+          for name in [n for n, _ in groups] + ["Other"]:
+              items = buckets[name]
+              if not items:
+                  continue
+              print(f"**{name}**")
+              print("")
+              for item in items:
+                  print(f"- {item}")
+              print("")
+          PYEOF
           echo "" >> notes.md
           echo "" >> notes.md
           echo "Install over the previous build; no uninstall needed." >> notes.md

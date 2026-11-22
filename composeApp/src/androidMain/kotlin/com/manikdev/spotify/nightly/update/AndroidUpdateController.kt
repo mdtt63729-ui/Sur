@@ -71,8 +71,35 @@ class AndroidUpdateController(
 
     /** Called once per process start: resumes a pending install or looks for a new release. */
     fun start() {
-        scope.launch { refresh() }
+        // Clean up first: an APK that belongs to the version now running has done its job, and the
+        // file has no business sitting in storage afterwards.
+        scope.launch {
+            cleanupInstalledApk()
+            refresh()
+        }
     }
+
+    /**
+     * Deletes a stored update APK once its version is no longer newer than the one running.
+     *
+     * The controller already deletes an APK when a NEWER release appears, so it never accumulates
+     * installers it has moved past. What it did not do was remove the file after the update was
+     * actually installed - so every install left a 30MB APK behind. This runs on every launch: if
+     * the pending version is the version now running (or older), the file is deleted and the
+     * pending record cleared.
+     */
+    private suspend fun cleanupInstalledApk() {
+        runCatching {
+            val pendingVersion = prefs.getString(KEY_VERSION, null) ?: return@runCatching
+            val path = prefs.getString(KEY_PATH, null) ?: return@runCatching
+            if (compareUpdateVersions(pendingVersion, currentVersion) <= 0) {
+                val file = File(path)
+                if (file.exists()) file.delete()
+                clearPending()
+            }
+        }
+    }
+
 
     override fun check() {
         scope.launch { refresh() }
@@ -154,12 +181,12 @@ class AndroidUpdateController(
             val file = File(pendingPath)
             // Already installed? Then the stored APK is dead weight and the sheet must not
             // reappear on every launch just because the file survived the install.
-            if (compareVersions(appVersion, pendingVersion) >= 0) {
+            if (compareUpdateVersions(appVersion, pendingVersion) >= 0) {
                 runCatching { file.delete() }
                 clearPending()
             } else if (!file.exists()) {
                 clearPending()
-            } else if (latest == null || compareVersions(pendingVersion, latest.versionName) >= 0) {
+            } else if (latest == null || compareUpdateVersions(pendingVersion, latest.versionName) >= 0) {
                 // Still the newest thing we know about: offer Install, never Download.
                 _state.value =
                     UpdateUiState.ReadyToInstall(
@@ -180,7 +207,7 @@ class AndroidUpdateController(
             if (_state.value is UpdateUiState.Checking) _state.value = UpdateUiState.Idle
             return
         }
-        if (compareVersions(appVersion, latest.versionName) >= 0) {
+        if (compareUpdateVersions(appVersion, latest.versionName) >= 0) {
             cleanOldApks(keep = null)
             if (_state.value is UpdateUiState.Checking) _state.value = UpdateUiState.Idle
             return
@@ -331,7 +358,7 @@ class AndroidUpdateController(
     }
 
     /** Dotted versions compared number by number, so 2.10.0 sorts above 2.9.0. */
-    private fun compareVersions(
+    private fun compareUpdateVersions(
         a: String,
         b: String,
     ): Int {
