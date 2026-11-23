@@ -16,6 +16,7 @@ import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import coil3.ImageLoader
+import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.manikdev.common.MERGING_DATA_TYPE
@@ -202,7 +203,14 @@ internal class DownloadUtils(
     // Audio / Video
     override val downloads: StateFlow<Map<String, Pair<DownloadHandler.Download?, DownloadHandler.Download?>>>
         get() = _downloads
-    private val _downloadTask = MutableStateFlow<Map<String, Int>>(emptyMap())
+    /**
+ * The size the downloaded cover is cached at. Matches the player's own request, so the entry a
+ * download writes is the very entry the player, the mini player and the song list read - one
+ * copy, at the quality it was streamed at, kept on disk after the connection is gone.
+ */
+private const val COVER_CACHE_PX = 1024
+
+private val _downloadTask = MutableStateFlow<Map<String, Int>>(emptyMap())
     override val downloadTask: StateFlow<Map<String, Int>> get() = _downloadTask
     val downloadingVideoIds = MutableStateFlow<MutableSet<String>>(mutableSetOf())
 
@@ -222,6 +230,25 @@ internal class DownloadUtils(
             songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
             return
         }
+        // The cover is fetched into the SAME loader the interface reads from, at the size the
+        // player draws it, so a downloaded song keeps its artwork offline and at the quality it
+        // had while streaming. This used to build its own ImageLoader, whose cache nothing else
+        // ever read - so the fetch was thrown away, and it only ran at all when "play video"
+        // was on. It runs for every download now, through SingletonImageLoader.
+        runCatching {
+            SingletonImageLoader
+                .get(context)
+                .execute(
+                    ImageRequest
+                        .Builder(context)
+                        .data(thumbnail)
+                        .size(COVER_CACHE_PX)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .build(),
+                )
+        }.onFailure { Logger.w("Download", "artwork for $videoId not cached: ${it.message}") }
+
         var isVideo = false
         if (dataStoreManager.watchVideoInsteadOfPlayingAudio.first() == DataStoreManager.Values.TRUE) {
             val request =
@@ -230,7 +257,7 @@ internal class DownloadUtils(
                     .data(thumbnail)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .build()
-            val imageResult = ImageLoader(context).execute(request)
+            val imageResult = SingletonImageLoader.get(context).execute(request)
             if (imageResult.image?.height != imageResult.image?.width && imageResult.image != null) {
                 isVideo = true
             }
