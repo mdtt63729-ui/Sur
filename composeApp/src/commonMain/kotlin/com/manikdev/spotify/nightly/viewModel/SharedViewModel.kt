@@ -38,6 +38,7 @@ import com.manikdev.domain.extension.isSong
 import com.manikdev.domain.extension.isVideo
 import com.manikdev.domain.extension.toGenericMediaItem
 import com.manikdev.domain.manager.DataStoreManager
+import com.manikdev.domain.manager.VideoModeState
 import com.manikdev.domain.data.model.lyrics.RomanizationLanguage
 import com.manikdev.domain.manager.DataStoreManager.Values.FALSE
 import com.manikdev.domain.manager.DataStoreManager.Values.TRUE
@@ -1316,6 +1317,20 @@ class SharedViewModel(
                     _isOfficialBuild.value = false
                 }
             }
+        }
+    }
+
+    /**
+     * Switches the song playing now between audio and video, and re-resolves it.
+     *
+     * The video track is merged while the media source is built, so it cannot be turned on by
+     * showing a view - the source has to be built again. That is what re-playing the current queue
+     * item does. Choosing audio rebuilds it audio-only, so no video is fetched at all.
+     */
+    fun setVideoMode(video: Boolean) {
+        VideoModeState.set(video)
+        runCatching {
+            mediaPlayerHandler.playMediaItemInMediaSource(mediaPlayerHandler.currentSongIndex())
         }
     }
 

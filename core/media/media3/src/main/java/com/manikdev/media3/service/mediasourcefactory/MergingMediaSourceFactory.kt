@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import com.manikdev.common.MERGING_DATA_TYPE
 import com.manikdev.domain.data.player.LiveStreamRegistry
 import com.manikdev.domain.manager.DataStoreManager
+import com.manikdev.domain.manager.VideoModeState
 import com.maxrave.logger.Logger
 import com.manikdev.media3.extension.isFullyCached
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +59,12 @@ internal class MergingMediaSourceFactory(
             )
         }
         Logger.w("Merging Media Source", mediaItem.mediaMetadata.description.toString())
-        val getVideo = runBlocking(Dispatchers.IO) { dataStoreManager.watchVideoInsteadOfPlayingAudio.first() } == DataStoreManager.Values.TRUE
+        // The player's capsule OR the stored preference. With audio selected the source is built
+        // audio-only, so no video is fetched; choosing Video re-resolves this song with the track
+        // merged in.
+        val getVideo =
+            VideoModeState.isVideo ||
+                runBlocking(Dispatchers.IO) { dataStoreManager.watchVideoInsteadOfPlayingAudio.first() } == DataStoreManager.Values.TRUE
         Logger.w("Merging Media Source", getVideo.toString())
         if (mediaItem.mediaMetadata.description == MERGING_DATA_TYPE.VIDEO && getVideo && !isVideoUnreachable(mediaItem.mediaId)) {
             val videoItem =

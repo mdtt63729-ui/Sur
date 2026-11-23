@@ -62,7 +62,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.manikdev.common.Config.MAIN_PLAYER
+import com.manikdev.domain.manager.VideoModeState
 import com.manikdev.spotify.nightly.expect.ui.MediaPlayerViewWithSubtitle
+import com.manikdev.spotify.nightly.ui.component.MediaModeCapsule
 import com.manikdev.spotify.nightly.extension.LeftToRight
 import com.manikdev.spotify.nightly.extension.artworkScrimBrush
 import com.manikdev.spotify.nightly.extension.elapsedLabel
@@ -186,6 +188,16 @@ fun FullscreenPlayer(
         mutableStateOf(true)
     }
 
+    // Audio / video for this song. Audio is the default and is what every song opens on; choosing
+    // Video re-resolves the media source with the video track merged in, which is the only way the
+    // picture can appear - the track is not in the audio-only source at all.
+    var videoMode by remember { mutableStateOf(VideoModeState.isVideo) }
+    LaunchedEffect(nowPlayingState.nowPlayingTitle) {
+        // A different song starts on audio, as the capsule shows.
+        VideoModeState.reset()
+        videoMode = false
+    }
+
     Box {
         MediaPlayerViewWithSubtitle(
             playerName = MAIN_PLAYER,
@@ -200,6 +212,21 @@ fun FullscreenPlayer(
             isInPipMode = isInPipMode,
             mainTextStyle = typo().bodyLarge,
             translatedTextStyle = typo().bodyMedium,
+        )
+        // Sits over the picture, top centre. Audio is selected on every song until it is changed,
+        // and while audio is selected no video is fetched at all.
+        MediaModeCapsule(
+            isVideo = videoMode,
+            onSelect = { video ->
+                if (video != videoMode) {
+                    videoMode = video
+                    sharedViewModel.setVideoMode(video)
+                }
+            },
+            modifier =
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 12.dp),
         )
         if (!isInPipMode) {
             Row(Modifier.fillMaxSize()) {
