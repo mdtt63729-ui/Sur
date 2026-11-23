@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -209,46 +212,47 @@ private fun SweptLine(
     playhead: State<Long>,
     typography: AppleMusicTypography,
 ) {
-    // The words joined the way the line is shown, with each word's character range kept, so the
-    // playhead can be turned into an x position on the laid-out text.
     val text = remember(parsed) { parsed.words.joinToString(" ") { it.text } }
-    val ranges =
-        remember(parsed) {
-            var start = 0
-            parsed.words.map { word ->
-                val range = start until start + word.text.length
-                start += word.text.length + 1
-                range
+    val lineStart = parsed.lineStartTimeMs
+    val lineEnd = parsed.lineEndTimeMs
+
+    // Letter by letter, from the line's own span: how many characters the song has reached.
+    //
+    // This used to be drawn as two copies of the line - one dim, one bright - with the bright one
+    // clipped at an x position. That is what tore Devanagari and Bengali apart: the clip lands
+    // mid-cluster, so half of a letter and its matra came from the bright layer and half from the
+    // dim one, at different subpixel positions. One Text with per-character colour cannot do that -
+    // the whole line is shaped once, and only the ink colour changes. Latin lines look the same as
+    // before; complex scripts stop breaking.
+    //
+    // Recomposition happens once per character, not once per frame, because the derived state
+    // notifies only when the count changes.
+    val lit by remember(parsed, text) {
+        derivedStateOf {
+            if (lineEnd <= lineStart || text.isEmpty()) {
+                0
+            } else {
+                val progress = ((playhead.value - lineStart).toFloat() / (lineEnd - lineStart)).coerceIn(0f, 1f)
+                (progress * text.length).toInt().coerceIn(0, text.length)
             }
         }
-    var layout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
-    // The marquee sits on the Box, not on each Text, so the dim and bright copies scroll as one and
-    // the sweep stays over the word it belongs to.
-    Box(modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, animationMode = MarqueeAnimationMode.Immediately)) {
-        Text(
-            text = text,
-            style = typography.lyricStrip.copy(color = UNSUNG, textDirection = TextDirection.ContentOrLtr),
-            maxLines = 1,
-            softWrap = false,
-            onTextLayout = { layout = it },
-        )
-        Text(
-            text = text,
-            style = typography.lyricStrip.copy(textDirection = TextDirection.ContentOrLtr),
-            maxLines = 1,
-            softWrap = false,
-            modifier =
-                Modifier.drawWithContent {
-                    val measured = layout ?: return@drawWithContent
-                    val sweepX = sweepX(parsed, ranges, measured, playhead.value) ?: return@drawWithContent
-                    if (measured.getParagraphDirection(0) == ResolvedTextDirection.Rtl) {
-                        clipRect(left = sweepX) { this@drawWithContent.drawContent() }
-                    } else {
-                        clipRect(right = sweepX) { this@drawWithContent.drawContent() }
-                    }
-                },
-        )
     }
+    val sung = typography.lyricStrip.color
+    val annotated =
+        remember(text, lit, sung) {
+            buildAnnotatedString {
+                append(text)
+                if (lit > 0) addStyle(SpanStyle(color = sung), 0, lit)
+                if (lit < text.length) addStyle(SpanStyle(color = UNSUNG), lit, text.length)
+            }
+        }
+    Text(
+        text = annotated,
+        style = typography.lyricStrip.copy(textDirection = TextDirection.ContentOrLtr),
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, animationMode = MarqueeAnimationMode.Immediately),
+    )
 }
 
 /**
