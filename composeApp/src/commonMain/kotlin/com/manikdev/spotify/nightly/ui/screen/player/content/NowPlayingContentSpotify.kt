@@ -529,10 +529,17 @@ fun NowPlayingContentSpotify(
                                 Box(
                                     modifier =
                                         Modifier
-                                            .fillMaxWidth()
+                                            // Pinned to the screen's own width less 20dp a side,
+                                            // rather than fillMaxWidth().aspectRatio(1f). Those two
+                                            // are the same number only while the column has the
+                                            // height to spare: aspectRatio falls back to the height
+                                            // constraint when it is the smaller of the two, so on a
+                                            // short screen the cover quietly came out smaller than
+                                            // the card the Expressive style draws. A fixed side
+                                            // cannot be talked down by a height constraint.
                                             .padding(horizontal = 20.dp)
-                                            .alpha(if (pageHasCanvas) 0f else 1f)
-                                            .aspectRatio(1f),
+                                            .size((screenInfo.wDP - 40).dp)
+                                            .alpha(if (pageHasCanvas) 0f else 1f),
                                 ) {
                                     if (isCurrentArtworkPage) {
                                         // Live artwork (drives palette extraction via setBitmap).
