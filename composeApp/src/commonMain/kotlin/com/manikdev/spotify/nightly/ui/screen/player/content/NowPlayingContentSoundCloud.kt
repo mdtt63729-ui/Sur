@@ -834,7 +834,7 @@ private fun SoundCloudArtwork(
         val request =
             ImageRequest
                 .Builder(LocalPlatformContext.current)
-                .data(artworkUrl)
+                .data(artworkUrl?.playerArtworkAt())
                 .diskCachePolicy(CachePolicy.ENABLED)
                 .diskCacheKey(artworkUrl + "BIGGER")
                 .crossfade(550)

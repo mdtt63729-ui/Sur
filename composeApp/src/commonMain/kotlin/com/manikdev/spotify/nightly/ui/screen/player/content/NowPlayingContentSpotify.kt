@@ -567,7 +567,7 @@ fun NowPlayingContentSpotify(
                                                 model =
                                                     ImageRequest
                                                         .Builder(LocalPlatformContext.current)
-                                                        .data(artworkUrl)
+                                                        .data(artworkUrl?.playerArtworkAt())
                                                         .diskCachePolicy(CachePolicy.ENABLED)
                                                         .diskCacheKey(artworkUrl + "BIGGER")
                                                         .crossfade(550)
@@ -1838,7 +1838,7 @@ internal fun NowPlayingTrackInfoRow(
                 model =
                     ImageRequest
                         .Builder(LocalPlatformContext.current)
-                        .data(state.screenData.thumbnailURL)
+                        .data(state.screenData.thumbnailURL?.playerArtworkAt())
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .diskCacheKey(state.screenData.thumbnailURL + "BIGGER")
                         .crossfade(true)

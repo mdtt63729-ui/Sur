@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.LayoutDirection
@@ -33,13 +34,21 @@ internal fun LyricText(
     maxLines: Int = Int.MAX_VALUE,
     softWrap: Boolean = true,
 ) {
+    // Poppins, the app's typeface, carries no Devanagari glyphs. Android then fills each missing
+    // glyph from a fallback font one at a time, which is what tears Hindi lyrics apart: the
+    // matras are shaped by a different font from the letters they belong to, so they land in the
+    // wrong place. Any line in a non-Latin script is drawn in the system family instead, which
+    // shapes the whole cluster with one font. Latin lines keep Poppins exactly as before.
+    val needsSystemShaping = remember(text) { text.any { it.code > 0x024F } }
+    val resolvedStyle =
+        if (needsSystemShaping) style.copy(fontFamily = FontFamily.Default) else style
     val alignmentDirection = rememberLyricLayoutDirection(alignmentText)
     val readingDirection = rememberLyricLayoutDirection(text)
     // Scope the marquee's direction to the text, without mirroring the surrounding player.
     CompositionLocalProvider(LocalLayoutDirection provides readingDirection) {
         Text(
             text = text,
-            style = style.copy(textDirection = TextDirection.ContentOrLtr),
+            style = resolvedStyle.copy(textDirection = TextDirection.ContentOrLtr),
             modifier = modifier,
             textAlign = if (alignmentDirection == LayoutDirection.Rtl) TextAlign.Right else TextAlign.Left,
             color = color,

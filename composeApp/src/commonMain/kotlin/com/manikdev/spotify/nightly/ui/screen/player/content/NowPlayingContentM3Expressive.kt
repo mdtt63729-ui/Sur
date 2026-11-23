@@ -706,7 +706,7 @@ internal fun ExpressiveTrackInfoRow(
                 model =
                     ImageRequest
                         .Builder(LocalPlatformContext.current)
-                        .data(state.screenData.thumbnailURL)
+                        .data(state.screenData.thumbnailURL?.playerArtworkAt())
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .diskCacheKey(state.screenData.thumbnailURL + "BIGGER")
                         .crossfade(true)
