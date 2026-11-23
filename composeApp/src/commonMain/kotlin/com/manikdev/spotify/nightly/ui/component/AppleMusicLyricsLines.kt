@@ -66,6 +66,10 @@ var enhancedLyricsStyle by mutableStateOf(false)
 // depth of field proportional.
 private const val BLUR_PER_LINE_EM = 0.095f
 private const val BLUR_MAX_EM = 0.45f
+// The step the blur radius is rounded to. 0.75dp keeps the depths visually distinct - the step is
+// well under one pixel of visible difference at these sizes - while collapsing ten continuous radii
+// into three or four values, so a line change re-renders a couple of layers instead of ten.
+private const val BLUR_QUANTUM_DP = 0.75f
 // AMLL's resolveOpacity returns a flat 1 for unsung lines, but the reference screenshots plainly
 // fade with distance — the line under the sung one sits at roughly half, the next at a third, and
 // beyond that they all but vanish. AMLL is reproducing Apple, not defining it, and on this point
@@ -198,11 +202,19 @@ fun Modifier.appleMusicLyricFocus(
             else -> distanceFromCurrent
         }
     val fontSizeDp = with(LocalDensity.current) { AppleMusicLyricFontSize.toDp() }
+    // The radius is quantised. Every line used to carry its own continuous radius, so a single
+    // line change moved the radius of every blurred line on screen at once and each of those
+    // layers had to be re-rendered in the same frame - the stall you feel when the song moves on.
+    // Rounded to BLUR_QUANTUM_DP, most lines land on the same few radii and simply keep their
+    // layer; only the one or two lines crossing a step are re-rendered. The blur itself is
+    // unchanged - same look, same depths - it is only computed in steps instead of a smooth ramp.
     val targetBlur: Dp =
         if (!blurEnabled || allLinesCurrent || !hasActiveLine || distanceFromCurrent == 0) {
             0.dp
         } else {
-            fontSizeDp * (distance * BLUR_PER_LINE_EM).coerceAtMost(BLUR_MAX_EM)
+            val raw = fontSizeDp * (distance * BLUR_PER_LINE_EM).coerceAtMost(BLUR_MAX_EM)
+            val steps = (raw.value / BLUR_QUANTUM_DP).toInt()
+            (steps * BLUR_QUANTUM_DP).dp
         }
     val targetAlpha =
         when {
