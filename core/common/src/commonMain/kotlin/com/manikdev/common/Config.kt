@@ -15,9 +15,24 @@ object Config {
      */
     val OFFICIAL_PACKAGE_NAMES =
         setOf(
+            "com.manikdev.spotify",
+            "com.manikdev.spotify.dev",
             "com.manikdev.spotify.nightly",
             "com.manikdev.spotify.nightly.dev",
             "com.spotify.music",
+        )
+
+    /**
+     * The builds we sign ourselves. Their certificate is our keystore, not F-Droid's, so the
+     * F-Droid key comparison in checkOfficialBuild must not run for them - it would mark our own
+     * APKs unofficial the moment the package name is ours.
+     */
+    val SELF_SIGNED_PACKAGE_NAMES =
+        setOf(
+            "com.manikdev.spotify",
+            "com.manikdev.spotify.dev",
+            "com.manikdev.spotify.nightly",
+            "com.manikdev.spotify.nightly.dev",
         )
 
     const val SPOTIFY_LOG_IN_URL: String = "https://accounts.spotify.com/en/login"

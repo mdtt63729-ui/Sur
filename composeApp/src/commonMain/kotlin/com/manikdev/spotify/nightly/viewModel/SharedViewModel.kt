@@ -1305,6 +1305,9 @@ class SharedViewModel(
             _isOfficialBuild.value = false
             return
         }
+        // Our own builds carry our keystore, so comparing them against F-Droid's keys would call
+        // them unofficial. The package name already settled that question above.
+        if (packageName in Config.SELF_SIGNED_PACKAGE_NAMES) return
         viewModelScope.launch {
             updateRepository.getFdroidSigningKeys().collect { response ->
                 val keys = response.data
