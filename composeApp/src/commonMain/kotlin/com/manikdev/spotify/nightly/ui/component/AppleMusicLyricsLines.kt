@@ -290,14 +290,23 @@ fun Modifier.appleMusicLyricFocus(
 
     // alpha BEFORE blur: blurring an already-faded line keeps the two effects independent, whereas
     // fading a blurred layer washes the blur out into a flat smear.
+    // The grow is a layer transform, and a layer transform rasterises the text and stretches the
+    // bitmap. Latin glyphs survive a 3% stretch; Devanagari and Bengali do not - their matras sit
+    // on subpixel positions above and below the baseline, and stretching the rasterised layer
+    // pulls them off the letters they belong to. That is the torn Hindi and Bengali in the
+    // screenshots. The grow is skipped for any non-Latin line: it still fades and still blurs, it
+    // just is not scaled. Latin lines keep the animation exactly as it was.
+    val isLatinLine = originalWords.none { it.code > 0x024F }
     return this
         .graphicsLayer {
             if (enhancedLyricsStyle) alpha = enterAlpha.value
-            val p = lineProgress.value
-            val grow = 0.97f + 0.03f * p
-            scaleX = grow
-            scaleY = grow
-            transformOrigin = TransformOrigin(0f, 0.5f)
+            if (isLatinLine) {
+                val p = lineProgress.value
+                val grow = 0.97f + 0.03f * p
+                scaleX = grow
+                scaleY = grow
+                transformOrigin = TransformOrigin(0f, 0.5f)
+            }
         }
         .alpha(lineAlpha)
         .then(
