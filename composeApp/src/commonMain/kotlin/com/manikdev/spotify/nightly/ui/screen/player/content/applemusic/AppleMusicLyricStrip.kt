@@ -46,6 +46,9 @@ import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import com.manikdev.domain.data.model.metadata.Line
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import com.manikdev.spotify.nightly.extension.WordTiming
 import com.manikdev.spotify.nightly.extension.ParsedRichSyncLine
 import com.manikdev.spotify.nightly.extension.parseRichSyncWords
 import com.manikdev.spotify.nightly.ui.component.rememberLyricLayoutDirection
@@ -87,7 +90,10 @@ internal fun AppleMusicLyricStrip(
     val playhead =
         rememberSweepPlayhead(
             rawMs = state.timelineState.current - state.lyricsOffsetMs,
-            running = line != null && richSynced && state.controllerState.isPlaying,
+            // Line-synced lines are swept too now (their word timings are derived below), so the
+            // playhead has to run for them as well - it used to stop whenever the sheet was not
+            // rich-synced, which is why only rich-synced songs animated word by word.
+            running = line != null && state.controllerState.isPlaying,
         )
 
     AnimatedContent(
@@ -102,12 +108,16 @@ internal fun AppleMusicLyricStrip(
         transitionSpec = {
             // The new line rises into place as the old one rises away, a third of a line each way —
             // the direction lyrics travel in the Lyrics tab, so the two read as the same motion.
+            // Springs rather than tweens. A tween has a fixed duration and stops dead at its end;
+            // a spring arrives when the motion is spent and settles, so a line change reads as
+            // movement that finishes rather than movement that runs out. Damping is high enough
+            // that it settles without bouncing - the bouncy feel belongs to the capsule, not here.
             val enter =
-                fadeIn(tween(LINE_CHANGE_MS, easing = FastOutSlowInEasing)) +
-                    slideInVertically(tween(LINE_CHANGE_MS, easing = FastOutSlowInEasing)) { (it * 0.35f).toInt() }
+                fadeIn(spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)) +
+                    slideInVertically(spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)) { (it * 0.35f).toInt() }
             val exit =
-                fadeOut(tween(LINE_CHANGE_MS, easing = FastOutSlowInEasing)) +
-                    slideOutVertically(tween(LINE_CHANGE_MS, easing = FastOutSlowInEasing)) { -(it * 0.35f).toInt() }
+                fadeOut(spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium)) +
+                    slideOutVertically(spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium)) { -(it * 0.35f).toInt() }
             (enter togetherWith exit).using(SizeTransform(clip = false))
         },
         label = "appleMusicLyricStrip",
@@ -130,7 +140,16 @@ internal fun AppleMusicLyricStrip(
                     is StripContent.Sung -> {
                         val parsed =
                             remember(shown.line, richSynced) {
-                                if (richSynced) parseRichSyncWords(shown.line.words, shown.line.startTimeMs, shown.line.endTimeMs) else null
+                                if (richSynced) {
+                                    parseRichSyncWords(shown.line.words, shown.line.startTimeMs, shown.line.endTimeMs)
+                                } else {
+                                    // A line-synced sheet carries one time for the whole line. Splitting
+                                    // its text into words and giving each a share of the line's own
+                                    // duration - by length, because a long word is sung for longer than
+                                    // a short one - lets the same sweep run over it. Nothing is guessed
+                                    // about when the singer starts; only how the line's span divides.
+                                    lineSyncedWordTimings(shown.line)
+                                }
                             }
                         if (parsed != null) {
                             SweptLine(parsed = parsed, playhead = playhead, typography = typography)
@@ -232,6 +251,42 @@ private fun SweptLine(
     }
 }
 
+/**
+ * Word timings for a line that only knows when the LINE starts.
+ *
+ * The line's own span is divided between its words in proportion to their length, which follows
+ * speech far more closely than an even split: "extraordinary" occupies several times the time of
+ * "a". When the sheet gives no usable end time, the line is given a span from its word count so the
+ * sweep still moves instead of stalling at the first word.
+ */
+private fun lineSyncedWordTimings(line: Line): ParsedRichSyncLine? {
+    val text = line.displayText().trim()
+    if (text.isEmpty()) return null
+    val start = line.startTimeMs.toLongOrNull() ?: return null
+    val words = text.split(" ").filter { it.isNotBlank() }
+    if (words.isEmpty()) return null
+
+    val endRaw = line.endTimeMs.toLongOrNull()
+    val span =
+        if (endRaw != null && endRaw > start) {
+            endRaw - start
+        } else {
+            // No end time: assume a comfortable pace rather than freezing the sweep.
+            (words.size * FALLBACK_MS_PER_WORD).coerceAtLeast(FALLBACK_MS_PER_WORD)
+        }
+
+    val totalChars = words.sumOf { it.length }.coerceAtLeast(1)
+    var cursor = start
+    val timings =
+        words.map { word ->
+            val share = (span * word.length / totalChars).coerceAtLeast(MIN_WORD_MS)
+            val timing = WordTiming(text = word, startTimeMs = cursor)
+            cursor += share
+            timing
+        }
+    return ParsedRichSyncLine(words = timings, lineStartTimeMs = start, lineEndTimeMs = start + span)
+}
+
 // Where the light has got to: every word already sung, plus the part of the current one its own
 // duration says has gone by. A word runs until the next one starts; the last runs to the line's end.
 private fun sweepX(
@@ -328,6 +383,10 @@ private const val LAST_WORD_FALLBACK_MS = 600L
 // that the sweep trailed the voice by a visible fraction of a syllable and then hurried to catch
 // up, which reads as a stutter on fast lines. 90 keeps it on the singer without ever running
 // ahead, because the position still advances at most one frame at a time.
+// Used only when a line-synced sheet gives no end time: how long one word is assumed to last.
+private const val FALLBACK_MS_PER_WORD = 320L
+private const val MIN_WORD_MS = 80L
+
 private const val SWEEP_CATCH_UP_MS = 90.0
 private const val SWEEP_SNAP_MS = 500.0
 private const val SWEEP_MAX_EXTRAPOLATION_MS = 250.0
