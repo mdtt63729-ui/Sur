@@ -208,7 +208,7 @@ internal class DownloadUtils(
  * download writes is the very entry the player, the mini player and the song list read - one
  * copy, at the quality it was streamed at, kept on disk after the connection is gone.
  */
-private const val COVER_CACHE_PX = 1024
+private val COVER_CACHE_PX = 1024
 
 private val _downloadTask = MutableStateFlow<Map<String, Int>>(emptyMap())
     override val downloadTask: StateFlow<Map<String, Int>> get() = _downloadTask
