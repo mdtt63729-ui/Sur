@@ -880,6 +880,10 @@ fun LyricsView(
                                             blurEnabled = !isDragging,
                                             hasActiveLine = currentLineIndex >= 0,
                                             allLinesCurrent = allLinesCurrent,
+                                            // Only a Latin line takes the grow. Scaling the layer
+                                            // rasterises the text and pulls Indic matras off their
+                                            // letters - the torn Hindi and Bengali in the report.
+                                            isLatinLine = line.words.stripRichSyncTimestamps().none { it.code > 0x024F },
                                         ),
                             ) {
                                 Box(modifier = Modifier.padding(horizontal = AppleMusicLyricPaddingX)) {

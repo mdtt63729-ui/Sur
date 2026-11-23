@@ -193,6 +193,9 @@ fun Modifier.appleMusicLyricFocus(
     // situations that want opposite treatments — this one, and the pre-roll of a SYNCED sheet,
     // where a sung line is coming and PRE_ROLL_LINE_ALPHA is dimmer on purpose.
     allLinesCurrent: Boolean = false,
+    // False for a line in a script whose marks sit on subpixel positions - Devanagari, Bengali and
+    // the like. Those must not be scaled; see the graphicsLayer below.
+    isLatinLine: Boolean = true,
 ): Modifier {
     // Signed: negative means this line has already been sung. AMLL adds one to that side so the
     // page behind the singer recedes faster than the page ahead of it.
@@ -296,7 +299,6 @@ fun Modifier.appleMusicLyricFocus(
     // pulls them off the letters they belong to. That is the torn Hindi and Bengali in the
     // screenshots. The grow is skipped for any non-Latin line: it still fades and still blurs, it
     // just is not scaled. Latin lines keep the animation exactly as it was.
-    val isLatinLine = originalWords.none { it.code > 0x024F }
     return this
         .graphicsLayer {
             if (enhancedLyricsStyle) alpha = enterAlpha.value
