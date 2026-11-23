@@ -41,7 +41,7 @@ import java.net.URL
 class AndroidUpdateController(
     private val context: Context,
     private val currentVersion: String,
-    private val repo: String = "manikkdebnath24-dot/Spotify-Nightly",
+    private val repo: String = "mdtt63729-ui/Sur",
 ) : UpdateHostController {
     companion object {
         private const val PREFS = "app_update"

@@ -716,12 +716,12 @@ class Ytmusic {
         }
 
     suspend fun checkForGithubReleaseUpdate() =
-        httpClient.get("https://api.github.com/repos/manikkdebnath24-dot/Spotify-Nightly/releases/latest") {
+        httpClient.get("https://api.github.com/repos/mdtt63729-ui/Sur/releases/latest") {
             contentType(ContentType.Application.Json)
         }
 
     suspend fun checkForFdroidUpdate() =
-        httpClient.get("https://f-droid.org/api/v1/packages/com.manikdev.spotify.nightly") {
+        httpClient.get("https://f-droid.org/api/v1/packages/com.manikdev.spotify") {
             contentType(ContentType.Application.Json)
         }
 

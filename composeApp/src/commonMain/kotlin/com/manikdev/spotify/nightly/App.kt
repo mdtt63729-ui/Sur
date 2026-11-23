@@ -976,7 +976,7 @@ fun App(
                                 onClick = {
                                     shouldShowUpdateDialog = false
                                     viewModel.showedUpdateDialog = false
-                                    openUrl("https://github.com/manikkdebnath24-dot/Spotify-Nightly/releases/latest")
+                                    openUrl("https://github.com/mdtt63729-ui/Sur/releases/latest")
                                 },
                             ) {
                                 Text(
