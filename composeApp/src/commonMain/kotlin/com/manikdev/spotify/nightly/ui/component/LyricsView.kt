@@ -60,6 +60,8 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Dp
@@ -1321,6 +1323,53 @@ private fun AnimatedWord(
             val charCount = chars.size.coerceAtLeast(1)
             // A Latin word keeps its character order even inside an RTL line.
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                // A word in a complex script is NOT drawn one character per Text.
+                //
+                // Bengali, Devanagari and the rest put their vowels in marks that belong to the
+                // letter before them - the i-kar, the u-kar, the hasanta. Drawing each character in
+                // its own Text shapes each one alone, so a mark has no letter to attach to and lands
+                // wherever its own box happens to be. That is the torn text: the marks drift off
+                // their letters and the word falls apart, and it gets worse the further the sweep
+                // moves because each character's colour changes independently.
+                //
+                // One Text with per-character colour cannot do that: the word is shaped once, as a
+                // word, and only the ink colour of each character changes. It is still letter by
+                // letter - the same count, the same order - but the shaping is done properly.
+                if (word.any { it.code > 0x024F }) {
+                    val lit = (wordProgress * charCount).toInt().coerceIn(0, charCount)
+                    val coloured =
+                        remember(word, lit, restingColor, style) {
+                            buildAnnotatedString {
+                                append(word)
+                                chars.forEachIndexed { i, _ ->
+                                    addStyle(
+                                        SpanStyle(color = if (i < lit) Color.White else restingColor),
+                                        i,
+                                        i + 1,
+                                    )
+                                }
+                            }
+                        }
+                    Box {
+                        // The glow still rides underneath, on the whole word at once, so the bloom
+                        // follows the shaped outline instead of boxing each character.
+                        val glowShadow = heldGlow ?: glow?.copy(blurRadius = SUNG_BASE_GLOW_EM * fontPx)
+                        if (glowShadow != null) {
+                            Text(
+                                text = word,
+                                style =
+                                    style.copy(
+                                        shadow =
+                                            glowShadow.copy(
+                                                color = glowShadow.color.copy(alpha = SUNG_BASE_GLOW_ALPHA * flareGate),
+                                            ),
+                                    ),
+                                color = Color.Transparent,
+                            )
+                        }
+                        Text(text = coloured, style = style)
+                    }
+                } else {
                 Row {
                     chars.forEachIndexed { charIndex, ch ->
                         val charFrom = charIndex.toFloat() / charCount
@@ -1408,6 +1457,7 @@ private fun AnimatedWord(
                             )
                         }
                     }
+                }
                 }
             }
         }
