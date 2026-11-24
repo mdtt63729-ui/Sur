@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -248,7 +249,15 @@ private fun SweptLine(
         }
     Text(
         text = annotated,
-        style = typography.lyricStrip.copy(textDirection = TextDirection.ContentOrLtr),
+        // Poppins has no Bengali or Devanagari glyphs, so Android filled each missing one from a
+        // fallback face a glyph at a time and the marks ended up shaped by a different font from
+        // their letters. A line in a complex script is drawn in the system family, which shapes the
+        // whole word with one face. Latin lines keep Poppins.
+        style =
+            typography.lyricStrip.copy(
+                textDirection = TextDirection.ContentOrLtr,
+                fontFamily = if (text.any { it.code > 0x024F }) FontFamily.Default else typography.lyricStrip.fontFamily,
+            ),
         maxLines = 1,
         softWrap = false,
         modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, animationMode = MarqueeAnimationMode.Immediately),

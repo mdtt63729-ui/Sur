@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Dp
@@ -1339,14 +1340,27 @@ private fun AnimatedWord(
                     // Declared here as well as in the per-character branch below: that one is
                     // scoped inside its forEach, so this branch cannot see it.
                     val restingColor = pendingColorOverride ?: DimRichPendingColor
-                    val lit = (wordProgress * charCount).toInt().coerceIn(0, charCount)
+                    // The typeface is the system family for these words. Poppins - the app's own -
+                    // has no Bengali or Devanagari glyphs at all, so Android filled each missing
+                    // one from a fallback face a glyph at a time. That is the other half of the
+                    // tear: even shaped as one word, the marks were being drawn by a different
+                    // font from the letters they belong to. The system family shapes the whole
+                    // word with one face.
+                    val shapedStyle = style.copy(fontFamily = FontFamily.Default)
+                    // Colour is continuous, not a step at each character boundary. Rounding the
+                    // progress to whole characters made the word change in jumps - which is the
+                    // animation that went missing. This walks the same progress the per-character
+                    // branch below does, only as ink instead of separate glyphs.
                     val coloured =
-                        remember(word, lit, restingColor, style) {
+                        remember(word, wordProgress, restingColor, shapedStyle) {
                             buildAnnotatedString {
                                 append(word)
                                 chars.forEachIndexed { i, _ ->
+                                    val from = i.toFloat() / charCount
+                                    val to = (i + 1).toFloat() / charCount
+                                    val progress = ((wordProgress - from) / (to - from)).coerceIn(0f, 1f)
                                     addStyle(
-                                        SpanStyle(color = if (i < lit) Color.White else restingColor),
+                                        SpanStyle(color = lerp(restingColor, Color.White, progress)),
                                         i,
                                         i + 1,
                                     )
@@ -1361,7 +1375,7 @@ private fun AnimatedWord(
                             Text(
                                 text = word,
                                 style =
-                                    style.copy(
+                                    shapedStyle.copy(
                                         shadow =
                                             glowShadow.copy(
                                                 color = glowShadow.color.copy(alpha = SUNG_BASE_GLOW_ALPHA * flareGate),
@@ -1370,7 +1384,7 @@ private fun AnimatedWord(
                                 color = Color.Transparent,
                             )
                         }
-                        Text(text = coloured, style = style)
+                        Text(text = coloured, style = shapedStyle)
                     }
                 } else {
                 Row {
