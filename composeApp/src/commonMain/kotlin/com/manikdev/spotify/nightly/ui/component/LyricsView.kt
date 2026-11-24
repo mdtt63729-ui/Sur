@@ -1336,6 +1336,9 @@ private fun AnimatedWord(
                 // word, and only the ink colour of each character changes. It is still letter by
                 // letter - the same count, the same order - but the shaping is done properly.
                 if (word.any { it.code > 0x024F }) {
+                    // Declared here as well as in the per-character branch below: that one is
+                    // scoped inside its forEach, so this branch cannot see it.
+                    val restingColor = pendingColorOverride ?: DimRichPendingColor
                     val lit = (wordProgress * charCount).toInt().coerceIn(0, charCount)
                     val coloured =
                         remember(word, lit, restingColor, style) {
